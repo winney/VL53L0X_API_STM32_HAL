@@ -1,35 +1,33 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * <h2><center>&copy; Copyright (c) 2020 STMicroelectronics.
-  * All rights reserved.</center></h2>
-  *
-  * This software component is licensed by ST under BSD 3-Clause license,
-  * the "License"; You may not use this file except in compliance with the
-  * License. You may obtain a copy of the License at:
-  *                        opensource.org/licenses/BSD-3-Clause
-  *
-  ******************************************************************************
-  *
-  *  Created on: 4.01.2019
-  *      Author: Mateusz Salamon
-  *		 www.msalamon.pl
-  *
-  *      Website: https://msalamon.pl/tani-laserowy-pomiar-odleglosci-z-czujnikiem-tof-vl53l0x
-  *      GitHub:  https://github.com/lamik/VL53L0X_API_STM32_HAL
-  *      Contact: mateusz@msalamon.pl
-*/
+ ******************************************************************************
+ * @file           : main.c
+ * @brief          : Main program body
+ ******************************************************************************
+ * @attention
+ *
+ * <h2><center>&copy; Copyright (c) 2020 STMicroelectronics.
+ * All rights reserved.</center></h2>
+ *
+ * This software component is licensed by ST under BSD 3-Clause license,
+ * the "License"; You may not use this file except in compliance with the
+ * License. You may obtain a copy of the License at:
+ *                        opensource.org/licenses/BSD-3-Clause
+ *
+ ******************************************************************************
+ *
+ *  Created on: 20.05.2020
+ *      Author: Stanislav Punegov
+ *		 ADUC gmbh
+ *      GitHub:  https://github.com/winney/VL53L0X_API_STM32_HAL
+ *      Contact: st.punegov@gmail.com
+ */
 /* USER CODE END Header */
 
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "i2c.h"
-#include "usart.h"
+#include "usb_device.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -45,6 +43,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define VL53L0X_SENSORS_NUM 4
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -56,16 +55,49 @@
 
 /* USER CODE BEGIN PV */
 uint8_t Message[64];
-uint8_t MessageLen;
+uint16_t MessageLen;
 
-VL53L0X_RangingMeasurementData_t RangingData;
-VL53L0X_Dev_t  vl53l0x_c; // center module
-VL53L0X_DEV    Dev = &vl53l0x_c;
+VL53L0X_Dev_t  						vl53l0x_c[VL53L0X_SENSORS_NUM]; // center module
+VL53L0X_DEV    						Dev = NULL; //vl53l0x_c;
+uint16_t 							MyPinGPIO[VL53L0X_SENSORS_NUM];
+uint16_t							MyPinXSHUT[VL53L0X_SENSORS_NUM];
+const uint8_t MyI2cAddrList[]={0x54, 0x56, 0x58, 0x60, 0x62, 0x64, 0x66};
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
+void Configure_VL53L0X(uint8_t num);
+
+void Configure_VL53L0X(uint8_t num)
+{
+	static uint32_t refSpadCount[VL53L0X_SENSORS_NUM];
+	static uint8_t 	isApertureSpads[VL53L0X_SENSORS_NUM];
+	static uint8_t 	VhvSettings[VL53L0X_SENSORS_NUM];
+	static uint8_t 	PhaseCal[VL53L0X_SENSORS_NUM];
+
+	Dev = &vl53l0x_c[num];
+	//
+	// VL53L0X init for Single Measurement
+	//
+	VL53L0X_WaitDeviceBooted( Dev );
+	VL53L0X_DataInit( Dev );
+	VL53L0X_StaticInit( Dev );
+	VL53L0X_PerformRefCalibration(Dev, &(VhvSettings[num]), &(PhaseCal[num]));
+	VL53L0X_PerformRefSpadManagement(Dev, &(refSpadCount[num]), &(isApertureSpads[num]));
+	VL53L0X_SetDeviceMode(Dev, VL53L0X_DEVICEMODE_SINGLE_RANGING);
+	//
+	// Enable/Disable Sigma and Signal check
+	//
+	VL53L0X_SetLimitCheckEnable(Dev, VL53L0X_CHECKENABLE_SIGMA_FINAL_RANGE, 1);
+	VL53L0X_SetLimitCheckEnable(Dev, VL53L0X_CHECKENABLE_SIGNAL_RATE_FINAL_RANGE, 1);
+	VL53L0X_SetLimitCheckValue(Dev, VL53L0X_CHECKENABLE_SIGNAL_RATE_FINAL_RANGE, (FixPoint1616_t)(0.1*65536));
+	VL53L0X_SetLimitCheckValue(Dev, VL53L0X_CHECKENABLE_SIGMA_FINAL_RANGE, (FixPoint1616_t)(60*65536));
+	VL53L0X_SetMeasurementTimingBudgetMicroSeconds(Dev, 33000);
+	VL53L0X_SetVcselPulsePeriod(Dev, VL53L0X_VCSEL_PERIOD_PRE_RANGE, 18);
+	VL53L0X_SetVcselPulsePeriod(Dev, VL53L0X_VCSEL_PERIOD_FINAL_RANGE, 14);
+}
 
 /* USER CODE END PFP */
 
@@ -84,12 +116,11 @@ int main(void)
 	//
 	// VL53L0X initialisation stuff
 	//
-    uint32_t refSpadCount;
-    uint8_t isApertureSpads;
-    uint8_t VhvSettings;
-    uint8_t PhaseCal;
+	//    uint32_t refSpadCount;
+	//    uint8_t isApertureSpads;
+	//    uint8_t VhvSettings;
+	//    uint8_t PhaseCal;
   /* USER CODE END 1 */
-  
 
   /* MCU Configuration--------------------------------------------------------*/
 
@@ -110,57 +141,85 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_I2C1_Init();
-  MX_USART2_UART_Init();
+  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
-  MessageLen = sprintf((char*)Message, "msalamon.pl VL53L0X test\n\r");
-  HAL_UART_Transmit(&huart2, Message, MessageLen, 100);
 
-  Dev->I2cHandle = &hi2c1;
-  Dev->I2cDevAddr = 0x52;
+  while (HAL_GPIO_ReadPin(BTN_GPIO_Port, BTN_Pin))
+  {
+	  MessageLen = sprintf((char*)Message, "Push the button!!! \n\r");
+	  			CDC_Transmit_FS(Message,MessageLen);
+	  			HAL_Delay(500);
+  }
 
-  HAL_GPIO_WritePin(TOF_XSHUT_GPIO_Port, TOF_XSHUT_Pin, GPIO_PIN_RESET); // Disable XSHUT
-  HAL_Delay(20);
-  HAL_GPIO_WritePin(TOF_XSHUT_GPIO_Port, TOF_XSHUT_Pin, GPIO_PIN_SET); // Enable XSHUT
-  HAL_Delay(20);
 
-  //
-  // VL53L0X init for Single Measurement
-  //
+	MyPinXSHUT[0] = TOF_XSHUT_Pin;
+	MyPinXSHUT[1] = TOF_XSHUT1_Pin;
+	MyPinXSHUT[2] = TOF_XSHUT2_Pin;
+	MyPinXSHUT[3] = TOF_XSHUT3_Pin;
 
-  VL53L0X_WaitDeviceBooted( Dev );
-  VL53L0X_DataInit( Dev );
-  VL53L0X_StaticInit( Dev );
-  VL53L0X_PerformRefCalibration(Dev, &VhvSettings, &PhaseCal);
-  VL53L0X_PerformRefSpadManagement(Dev, &refSpadCount, &isApertureSpads);
-  VL53L0X_SetDeviceMode(Dev, VL53L0X_DEVICEMODE_SINGLE_RANGING);
+	HAL_GPIO_WritePin(TOF_XSHUT_GPIO_Port, MyPinXSHUT[0]|MyPinXSHUT[1]|MyPinXSHUT[2]|MyPinXSHUT[3], GPIO_PIN_RESET); // Disable XSHUT
 
-  // Enable/Disable Sigma and Signal check
-  VL53L0X_SetLimitCheckEnable(Dev, VL53L0X_CHECKENABLE_SIGMA_FINAL_RANGE, 1);
-  VL53L0X_SetLimitCheckEnable(Dev, VL53L0X_CHECKENABLE_SIGNAL_RATE_FINAL_RANGE, 1);
-  VL53L0X_SetLimitCheckValue(Dev, VL53L0X_CHECKENABLE_SIGNAL_RATE_FINAL_RANGE, (FixPoint1616_t)(0.1*65536));
-  VL53L0X_SetLimitCheckValue(Dev, VL53L0X_CHECKENABLE_SIGMA_FINAL_RANGE, (FixPoint1616_t)(60*65536));
-  VL53L0X_SetMeasurementTimingBudgetMicroSeconds(Dev, 33000);
-  VL53L0X_SetVcselPulsePeriod(Dev, VL53L0X_VCSEL_PERIOD_PRE_RANGE, 18);
-  VL53L0X_SetVcselPulsePeriod(Dev, VL53L0X_VCSEL_PERIOD_FINAL_RANGE, 14);
+	MessageLen = sprintf((char*)Message, "VL53L0X array test\n\r");
+	CDC_Transmit_FS(Message,MessageLen);
+
+	for (uint8_t i = 0; i < VL53L0X_SENSORS_NUM; i++)
+	{
+		VL53L0X_DeviceInfo_t DeviceInfo;
+		VL53L0X_Error Status = VL53L0X_ERROR_NONE;
+
+		HAL_GPIO_WritePin(TOF_XSHUT_GPIO_Port, MyPinXSHUT[i], GPIO_PIN_SET); // Enable XSHUT
+		HAL_Delay(50);
+
+		Dev = &(vl53l0x_c[i]);
+		Dev->I2cDevAddr = 0x52;
+		Dev->I2cHandle = &hi2c1;
+		Status = VL53L0X_GetDeviceInfo(Dev,&DeviceInfo);
+
+		if (DeviceInfo.ProductType != 0)
+		{
+			MessageLen = sprintf((char*)Message, "Sensor %d found: %s\n\r",i, DeviceInfo.Name);
+			CDC_Transmit_FS(Message,MessageLen);
+			Status = VL53L0X_SetDeviceAddress(Dev,MyI2cAddrList[i]);
+			HAL_Delay(100);
+			vl53l0x_c[i].I2cDevAddr = MyI2cAddrList[i];
+			Status = VL53L0X_DataInit(&vl53l0x_c[i]);
+			Configure_VL53L0X(i);
+		}
+		else
+		{
+			MessageLen = sprintf((char*)Message, "Sensor %d not found\n\r", i);
+			CDC_Transmit_FS(Message,MessageLen);
+
+		}
+	}
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {
+	while (1)
+	{
+		static uint8_t cnt = 0;
+		static VL53L0X_RangingMeasurementData_t 	RangingData[VL53L0X_SENSORS_NUM];
 
-	  VL53L0X_PerformSingleRangingMeasurement(Dev, &RangingData);
 
-	  if(RangingData.RangeStatus == 0)
-	  {
-		  MessageLen = sprintf((char*)Message, "Measured distance: %i\n\r", RangingData.RangeMilliMeter);
-		  HAL_UART_Transmit(&huart2, Message, MessageLen, 100);
-	  }
+		Dev = &(vl53l0x_c[cnt]);
+
+		VL53L0X_PerformSingleRangingMeasurement(Dev, &(RangingData[cnt]));
+
+		if(RangingData[cnt].RangeStatus == 0)
+		{
+			MessageLen = sprintf((char*)Message, "Sensor %d distance: %i\n\r", cnt, RangingData[cnt].RangeMilliMeter);
+			CDC_Transmit_FS((uint8_t*)Message,MessageLen);
+		}
+
+		HAL_Delay(500);
+
+		if (++cnt >=VL53L0X_SENSORS_NUM)cnt = 0;
 
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-  }
+	}
   /* USER CODE END 3 */
 }
 
@@ -217,7 +276,7 @@ void SystemClock_Config(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
+	/* User can add his own implementation to report the HAL error return state */
 
   /* USER CODE END Error_Handler_Debug */
 }
@@ -233,7 +292,7 @@ void Error_Handler(void)
 void assert_failed(uint8_t *file, uint32_t line)
 { 
   /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
+	/* User can add his own implementation to report the file name and line number,
      tex: printf_uart("Wrong parameters value: file %s on line %d\r\n", file, line) */
   /* USER CODE END 6 */
 }
