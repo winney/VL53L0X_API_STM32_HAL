@@ -34,6 +34,9 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include "vl53l0x_api.h"
+#ifndef LAGR_H
+#include "lagr.h"
+#endif
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -61,8 +64,10 @@ VL53L0X_Dev_t  						vl53l0x_c[VL53L0X_SENSORS_NUM]; // center module
 VL53L0X_DEV    						Dev = NULL; //vl53l0x_c;
 uint16_t 							MyPinGPIO[VL53L0X_SENSORS_NUM];
 uint16_t							MyPinXSHUT[VL53L0X_SENSORS_NUM];
-const uint8_t MyI2cAddrList[]={0x54, 0x56, 0x58, 0x60, 0x62, 0x64, 0x66};
-
+const uint8_t 						MyI2cAddrList[]={0x54, 0x56, 0x58, 0x60, 0x62, 0x64, 0x66};
+const double 						MySensOrient[]={270*M_PI/180,	200*M_PI/180,	160*M_PI/180,	100*M_PI/180};
+double 								PointsData[2][VL53L0X_SENSORS_NUM+2];
+uint8_t 							size;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -192,7 +197,12 @@ int main(void)
 
 		}
 	}
-  /* USER CODE END 2 */
+
+	PointsData[0][0] = 0;
+	PointsData[1][0] = 0.05;
+	size = 1;
+
+	/* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
@@ -206,15 +216,38 @@ int main(void)
 
 		VL53L0X_PerformSingleRangingMeasurement(Dev, &(RangingData[cnt]));
 
+
+
 		if(RangingData[cnt].RangeStatus == 0)
 		{
+			PointsData[0][size] = MySensOrient[cnt];
+			PointsData[1][size] = (double)RangingData[cnt].RangeMilliMeter / 1000;
+			size++;
+
 			MessageLen = sprintf((char*)Message, "Sensor %d distance: %i\n\r", cnt, RangingData[cnt].RangeMilliMeter);
 			CDC_Transmit_FS((uint8_t*)Message,MessageLen);
 		}
 
+		if (++cnt >=VL53L0X_SENSORS_NUM)
+		{
+			cnt = 0;
+			PointsData[0][size] = PointsData[0][0];
+			PointsData[1][size] = PointsData[1][0];
+			size++;
+
+			for ( uint16_t phi = 0; phi <=36000; phi++)
+			{
+
+
+			}
+
+			size=1;
+
+
+		}
+
 		HAL_Delay(500);
 
-		if (++cnt >=VL53L0X_SENSORS_NUM)cnt = 0;
 
     /* USER CODE END WHILE */
 
